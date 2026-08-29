@@ -1,4 +1,5 @@
-Summer with Tailscale
+# Building with, and on, Tailscale
+## Tailscale summer 2026 update code and script examples
 ===
 
 This repository provides scripts and code patterns to programmatically provision isolated Tailscale networks (tailnets), embed Zero-Trust connectivity directly into application binaries using tsnet, and automate cross-tailnet resource sharing via policy files.
