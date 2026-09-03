@@ -49,6 +49,7 @@ example API response
 ## List and Delete your additional Tailnets
 
 ### List Tailnets
+
 At any point you can use your token to query all the Tailnets that are associated with your account.
 
 Use the following command to list all your tailnets:
@@ -71,6 +72,21 @@ curl https://api.tailscale.com/api/v2/tailnet/T4nzP1SHT921CNTRL \
 ```
 
 **Security Note:** If an OAuth client ID or secret is ever compromised, revoke it immediately. Do not simply modify its permissions, as active access tokens may remain valid until expiration.
+
+### Access Token Recovery
+
+If you lose your API-only tailnet's OAuth credentials, you can regain access using an OAuth client from the parent tailnet. As long as that client has the all scope, it can request a new OAuth access token for the API-only tailnet by passing its tailnet ID in the /token request.
+
+<img width="670" height="273" alt="screenshot-oauth-allscope" src="https://github.com/user-attachments/assets/5804793d-334c-4fd0-b5fd-de665a6185f8" />
+
+
+```bash
+TAILNET_ACCESS_TOKEN=$(curl -sS -X POST "https://api.tailscale.com/api/v2/oauth/token" \
+  -d "client_id=$CLIENT_ID" \
+  -d "client_secret=$CLIENT_SECRET" \
+  -d "tailnet=T4nzP1SHT921CNTRL" \
+  | jq -r '.access_token')
+```
 
 ## What's next?
 
