@@ -14,7 +14,7 @@ This repo is a walkthrough-style collection, not a single deployable app. Each t
 
 - [01-tailnet-sandboxes](01-tailnet-sandboxes/readme.md): Manual curl/jq walkthrough for programmatically creating, listing, and deleting isolated tailnets via the Tailscale API (OAuth client credentials flow). Includes a screenshot of the OAuth client scope setup.
 - [02-tailnet-membership](02-tailnet-membership/readme.md): A Go app (`main.go`) using `tsnet` to embed a Tailscale node directly in-process — no system daemon required. Registers on a tailnet and serves "Hello from tsnet" over automatic HTTPS via `ListenTLS`. Includes a multi-stage `dockerfile` producing a minimal static `scratch`-based image.
-- [03-declarative-sharing](03-declarative-sharing/readme.md): Explains Declarative Tailnet Sharing (currently waitlisted) — defining cross-tailnet access as code in the policy file via `externalTailnets` and `grants`, scoped by group/tag rather than raw IPs.
+- [03-declarative-sharing](03-declarative-sharing/readme.md): Explains Declarative Node Sharing (currently waitlisted) — defining cross-tailnet access as code in the policy file via `externalTailnets` and `grants`, scoped by group/tag rather than raw IPs.
 - [04-api-is-the-way](04-api-is-the-way/readme.md): Ties modules 01-03 together via the API — issuing auth keys and editing the policy file programmatically instead of through the console. Includes `end-to-end.sh`, a runnable script that provisions two tailnets, deploys the module 02 app into each, and declaratively shares them.
 
 ## Key files
@@ -30,4 +30,4 @@ This repo is a walkthrough-style collection, not a single deployable app. Each t
 - Module numbering encodes reading/build order — each module's readme ends with a "What's next" pointer to the following one.
 - `02-tailnet-membership` and `04-api-is-the-way` have runnable code (`main.go`/`dockerfile` and `end-to-end.sh` respectively); `01` and `03` are narrative/API walkthroughs.
 - Deleting a tailnet requires that specific tailnet's own `oauthClient` credentials (returned when it was created), not the org-level `CLIENT_ID`/`CLIENT_SECRET` — this trips people up, see `01-tailnet-sandboxes/readme.md`'s "Delete a Tailnet" section.
-- Tailscale concepts referenced throughout: tailnet, `tsnet`, auth keys vs. OAuth client credentials, policy files (ACLs/grants/groups), Declarative Tailnet Sharing.
+- Tailscale concepts referenced throughout: tailnet, `tsnet`, auth keys vs. OAuth client credentials, policy files (ACLs/grants/groups), Declarative Node Sharing.
