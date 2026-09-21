@@ -17,6 +17,17 @@
 #   ./end-to-end.sh up --direction one   # one-directional: only sandbox-b's
 #                             # tag can reach into sandbox-a (default is
 #                             # bidirectional: --direction bi)
+#   ./end-to-end.sh up --only sandboxes  # run a single step instead of the
+#                             # whole pipeline. Valid steps, in pipeline
+#                             # order:
+#                             #   sandboxes  provision the two tailnets      (01)
+#                             #   app        enable HTTPS, tag the policy,
+#                             #              issue an auth key, deploy tsnet (02)
+#                             #   sharing    apply the declarative sharing
+#                             #              policy between the two sandboxes(03)
+#                             #   verify     probe cross-tailnet connectivity
+#                             # Steps after 'sandboxes' assume earlier steps
+#                             # already ran (state is read from .state/).
 #   ./end-to-end.sh status   # show what's running
 #   ./end-to-end.sh policy   # dump each sandbox tailnet's current policy file
 #                             # (uses the per-tailnet credentials saved under
@@ -41,6 +52,11 @@ LABELS=(a b)
 # sandbox-a (sandbox-a shares its app; sandbox-b never shares anything back).
 DIRECTION="bi"
 
+# Pipeline steps, in order. --only restricts `up` to a single one of these;
+# empty means "run them all" (the default, full end-to-end pipeline).
+STEPS=(sandboxes app sharing verify)
+ONLY_STEP=""
+
 log()  { printf '\033[1;34m[e2e]\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m[e2e]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[e2e]\033[0m %s\n' "$*" >&2; exit 1; }
@@ -52,6 +68,8 @@ parse_up_args() {
     case "$1" in
       --direction)   DIRECTION="${2:-}"; shift 2 ;;
       --direction=*) DIRECTION="${1#*=}"; shift ;;
+      --only)        ONLY_STEP="${2:-}"; shift 2 ;;
+      --only=*)      ONLY_STEP="${1#*=}"; shift ;;
       *) die "unknown argument to 'up': $1" ;;
     esac
   done
@@ -59,7 +77,16 @@ parse_up_args() {
     bi|one) ;;
     *) die "--direction must be 'bi' or 'one' (got '$DIRECTION')" ;;
   esac
+  if [[ -n "$ONLY_STEP" ]]; then
+    local step ok=false
+    for step in "${STEPS[@]}"; do [[ "$step" == "$ONLY_STEP" ]] && ok=true; done
+    "$ok" || die "--only must be one of: ${STEPS[*]} (got '$ONLY_STEP')"
+  fi
 }
+
+# should_run STEP -> true if this step should execute given --only (or if
+# no --only was passed, in which case every step runs).
+should_run() { [[ -z "$ONLY_STEP" || "$ONLY_STEP" == "$1" ]]; }
 
 # For 'one', sandbox-a is always the sharer (exposes its own app) and
 # sandbox-b is always the receiver (its tag gets referenced, no grant back).
@@ -352,18 +379,20 @@ verify_connectivity() {
   fi
 }
 
-cmd_up() {
+state_file_or_die() {
+  local label="$1" f="$STATE_DIR/tailnet-$label.json"
+  [[ -f "$f" ]] || die "no tailnet state for sandbox-$label yet — run '$0 up --only sandboxes' first"
+  echo "$f"
+}
+
+step_sandboxes() {
   require_env
-  require_cmd curl; require_cmd jq; require_cmd docker
   mkdir -p "$STATE_DIR"
   chmod 700 "$STATE_DIR"
 
   log "requesting org access token"
   local org_token; org_token=$(org_access_token)
   [[ "$org_token" != "null" && -n "$org_token" ]] || die "failed to get org access token — check CLIENT_ID/CLIENT_SECRET"
-
-  log "building tsnet app image from ../02-tailnet-membership"
-  docker build -q -f "$ROOT_DIR/02-tailnet-membership/dockerfile" -t "$APP_IMAGE" "$ROOT_DIR/02-tailnet-membership" >/dev/null
 
   for label in "${LABELS[@]}"; do
     local f="$STATE_DIR/tailnet-$label.json"
@@ -386,9 +415,15 @@ cmd_up() {
       die "tailnet creation failed for e2e-sandbox-$label: $msg"
     fi
   done
+}
+
+step_app() {
+  require_cmd docker
+  log "building tsnet app image from ../02-tailnet-membership"
+  docker build -q -f "$ROOT_DIR/02-tailnet-membership/dockerfile" -t "$APP_IMAGE" "$ROOT_DIR/02-tailnet-membership" >/dev/null
 
   for label in "${LABELS[@]}"; do
-    local other; other=$([[ "$label" == "a" ]] && echo b || echo a)
+    state_file_or_die "$label" >/dev/null
     local cid csecret token authkey
 
     cid=$(jq -r '.oauthClient.id' "$STATE_DIR/tailnet-$label.json")
@@ -401,11 +436,6 @@ cmd_up() {
     log "declaring tag:tsnet-app for sandbox-$label"
     patch_policy_tag "$token" || die "failed to update policy tags for sandbox-$label"
 
-    other_id=$(jq -r '.id' "$STATE_DIR/tailnet-$other.json")
-    local role; role=$(sharing_role_for "$label")
-    log "updating policy for sandbox-$label -> sandbox-$other sharing (role: $role, direction: $DIRECTION)"
-    patch_policy_sharing "$token" "$other_id" "$other" "$role"
-
     log "issuing tsnet auth key for sandbox-$label"
     authkey=$(issue_auth_key "$token")
     [[ -n "$authkey" && "$authkey" != "null" ]] || die "failed to issue auth key for sandbox-$label"
@@ -413,11 +443,32 @@ cmd_up() {
     log "deploying app for sandbox-$label"
     deploy_app "$label" "$authkey" "$token"
   done
+}
 
+step_sharing() {
+  for label in "${LABELS[@]}"; do
+    local other; other=$([[ "$label" == "a" ]] && echo b || echo a)
+    state_file_or_die "$label" >/dev/null
+    state_file_or_die "$other" >/dev/null
+    local cid csecret token other_id
+
+    cid=$(jq -r '.oauthClient.id' "$STATE_DIR/tailnet-$label.json")
+    csecret=$(jq -r '.oauthClient.secret' "$STATE_DIR/tailnet-$label.json")
+    token=$(tailnet_access_token "$cid" "$csecret")
+
+    other_id=$(jq -r '.id' "$STATE_DIR/tailnet-$other.json")
+    local role; role=$(sharing_role_for "$label")
+    log "updating policy for sandbox-$label -> sandbox-$other sharing (role: $role, direction: $DIRECTION)"
+    patch_policy_sharing "$token" "$other_id" "$other" "$role"
+  done
+}
+
+step_verify() {
+  require_cmd docker
   log "verifying cross-tailnet connectivity (direction: $DIRECTION)"
   local dns_a dns_b token_a token_b
-  dns_a=$(jq -r '.dnsName' "$STATE_DIR/tailnet-a.json")
-  dns_b=$(jq -r '.dnsName' "$STATE_DIR/tailnet-b.json")
+  dns_a=$(jq -r '.dnsName' "$(state_file_or_die a)")
+  dns_b=$(jq -r '.dnsName' "$(state_file_or_die b)")
   token_a=$(tailnet_token_from_state a)
   token_b=$(tailnet_token_from_state b)
   if [[ "$DIRECTION" == "bi" ]]; then
@@ -426,8 +477,21 @@ cmd_up() {
     log "one-directional sharing: sandbox-a shares but doesn't receive access, skipping sandbox-a -> sandbox-b probe"
   fi
   verify_connectivity b "$token_b" "sandbox-a-app.$dns_a"
+}
 
-  log "done. run '$0 status' to see the two apps."
+cmd_up() {
+  require_cmd curl; require_cmd jq
+
+  should_run sandboxes && step_sandboxes
+  should_run app       && step_app
+  should_run sharing   && step_sharing
+  should_run verify    && step_verify
+
+  if [[ -n "$ONLY_STEP" ]]; then
+    log "done running step '$ONLY_STEP'."
+  else
+    log "done. run '$0 status' to see the two apps."
+  fi
 }
 
 cmd_status() {
@@ -520,5 +584,5 @@ case "${1:-}" in
   status) cmd_status ;;
   policy) cmd_policy ;;
   down)   cmd_down ;;
-  *) die "usage: $0 {up [--direction bi|one]|status|policy|down}" ;;
+  *) die "usage: $0 {up [--direction bi|one] [--only $(IFS='|'; echo "${STEPS[*]}")]|status|policy|down}" ;;
 esac
