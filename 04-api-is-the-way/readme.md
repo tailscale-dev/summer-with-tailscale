@@ -52,7 +52,7 @@ curl -sS "https://api.tailscale.com/api/v2/tailnet/-/keys" \
         }
       }
     },
-    "expirySeconds": 600
+    "expirySeconds": 3600
   }' | jq -r '.key'
 ```
 
@@ -95,10 +95,13 @@ None of these steps touch the console UI. That's the point of this module: the A
 ```bash
 ./end-to-end.sh up       # provision, deploy, and share
 ./end-to-end.sh status   # see the two apps that came up
+./end-to-end.sh policy   # dump each sandbox tailnet's current policy file
 ./end-to-end.sh down     # tear everything back down
 ```
 
 The script is deliberately thin—each step is a direct translation of a curl call from this readme (or from [module 01](../01-tailnet-sandboxes/readme.md), [module 02](../02-tailnet-membership/readme.md), and [module 03](../03-declarative-sharing/readme.md)) plus a little `docker` glue to actually run the app. Read the script's comments alongside those modules if you want to see exactly which call maps to which line.
+
+`up` also takes `--direction bi|one` (bidirectional sharing is the default; `one` limits it to sandbox-b reaching into sandbox-a) and `--only <steps>` to run a subset of the pipeline instead of the whole thing (e.g. `--only sharing,verify`). And any step can be pointed at an existing tailnet instead of one this script provisions: set `SANDBOX_A_CLIENT_ID`/`SANDBOX_A_CLIENT_SECRET` (and, depending on the step, `SANDBOX_A_TAILNET_ID`/`SANDBOX_A_DNS_NAME`) — or the `SANDBOX_B_*` equivalents — and that label is left alone by `sandboxes`/`down`, with `app`/`sharing` printing the exact change to make by hand and pausing until it's confirmed live, instead of writing to a tailnet the script doesn't own. See the script's header comment and `../.env.example` for the full list of overrides.
 
 ## What's next?
 
